@@ -1,6 +1,6 @@
 # PoC Advertising v2
 
-[⚡️ One Click Demo ⚡️](https://github.com/PaulSenon/poc-advertising-shared/tree/yieldbird)
+[⚡️ One Click Demo ⚡️](https://pr.new/PaulSenon/poc-advertising-shared/tree/yieldbird)
 
 ## Description
 
