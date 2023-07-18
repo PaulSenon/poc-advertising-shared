@@ -12,11 +12,6 @@ declare global {
     }
 }
 
-enum MediaTypeName {
-    banner,
-    native,
-}
-
 // ref: https://docs.prebid.org/dev-docs/adunit-reference.html#adUnit.mediaTypes.banner
 enum AdPosition {
     UNKNOWN = 0,
@@ -47,18 +42,40 @@ type Bid = {
     params: Record<string, string|number>,
 }
 
+// MOCK BIDDERS CONFIG PROVIDER (could be yieldbird ?)
+function fetchBiddersConfig(): Promise<Bid[]> {
+    return Promise.resolve([
+        { // TODO: missing specs, fake bidder
+            "bidder": "my-super-bidder",
+            "params": {
+                "toto": "titi",
+            }
+        }
+    ])
+}
+
+/**
+ * This is a Prebid service class wrapper so it's well isolated from the ad core
+ */
 export default class Prebid {
     private adUnits: AdUnitConfig[] = [];
+    private biddersConfig: Bid[] = [];
 
     public constructor(private readonly isDebug = false) {
 
     }
 
-    public init(): Promise<void> {
+    /**
+     * Prebid initial setup (define api/load scripts)
+     */
+    public async init(): Promise<void> {
         this.definePrebidApi();
-        return Promise.resolve();
+        this.biddersConfig = await fetchBiddersConfig();
     }
 
+    /**
+     * Recycle prebid (like init but with a clean first)
+     */
     public reset(): Promise<void> {
         this.adUnits = [];
         window.pbjs.initAdserverSet = false;
@@ -67,14 +84,19 @@ export default class Prebid {
         return Promise.resolve();
     }
 
+    /**
+     * Define the prebid API if needed
+     */
     public definePrebidApi(): void {
         window.pbjs = window.pbjs || { que: [] };
     }
 
     /**
-     * /!\ must be run in googletag.cmd.Push context
-     * you should start doing ad calls with googletag.pubads().refresh(); when it resolves
-     * you might want to timeout this anyway
+     * /!\ must be run in googletag.cmd.push context /!\
+     * 
+     * Run bids and resolves when bidders timedout or when bid successful. 
+     * Should await this promise before calling ads (googletag.pubads().refresh())
+     * You might want to timeout this promise anyway.
      */
     public runBids(): Promise<void> {
         // setup prebid global config
@@ -84,13 +106,15 @@ export default class Prebid {
                 url: false
             },
         });
+
         // setup prebid adUnits config
         window.pbjs.addAdUnits(this.adUnits);
 
+        // promisify bid run
         const biddingPromise: Promise<void> = new Promise(resovle => {
             window.pbjs.que.push(() => {
                 window.pbjs.requestBids({
-                    timeout: 1000, // todo const
+                    timeout: 1000, // TODO: const
                     bidsBackHandler: () => {
                         if (window.pbjs.initAdserverSet) return;
     
@@ -118,14 +142,10 @@ export default class Prebid {
             mediaTypes: {
                 banner: {
                     sizes: data.sizes,
-                    pos: data.pos || undefined,
+                    pos: data.pos || AdPosition.UNKNOWN,
                 }
             },
-            bids: [{
-                "bidder": "ogury",
-                "params": {
-                }
-            }]
+            bids: this.biddersConfig
         })
     }
 }

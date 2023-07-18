@@ -1,4 +1,4 @@
-import { BreakpointString } from "./BreakPointDetector";
+import { BreakpointString } from "../utils/BreakPointDetector";
 
 enum AdSlotKind {
     leaderboard,

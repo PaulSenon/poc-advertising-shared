@@ -1,10 +1,10 @@
-import BreakPointDetector from "./BreakPointDetector";
-import InView from "./InView";
-import LegacyWallpaper from "./LegacyWallpaper";
+import BreakPointDetector from "../utils/BreakPointDetector";
+import InView from "../utils/InView";
+import LegacyWallpaper from "../utils/LegacyWallpaper";
 import SwiperController from "./Swiper";
-import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "./adSlotConfig";
+import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "../config/adSlotConfig";
 import Prebid from './Prebid';
-import IAdvertisingKeyvalueProvider from "./IAdvertisingKeyvalueProvider";
+import IAdvertisingKeyvalueProvider from "../utils/IAdvertisingKeyvalueProvider";
 
 /**
  * LEXIQUE:
@@ -30,92 +30,6 @@ import IAdvertisingKeyvalueProvider from "./IAdvertisingKeyvalueProvider";
  *   - data-ad-type => required, type from AdSlotKind enum (e.g. "leaderboard")
  *   - data-ad-position => required, index of the ad (per ad-type, inside on slide) // TODO: is is usefull ???? shall we rename in ad-index ?
  */
-
-type Stats = {
-    startTimeMs: number;
-    endTimeMs: number;
-    timeoutMs: number;
-}
-class StatsCollector {
-    private readonly statsBag: Map<string, Stats[]> = new Map(); 
-    public push(id: string, stats: Stats) {
-        const savedStats = this.statsBag.get(id) || [];
-        savedStats.push(stats);
-
-        // in case wasn't existing we register the new created stats array
-        if (!this.statsBag.has(id)) this.statsBag.set(id, savedStats);
-    }
-
-    public get(id: string): Stats[] | undefined {
-        return this.statsBag.get(id);
-    }
-
-    public clear(): void {
-        this.statsBag.clear();
-    }
-
-    public getTotalBlockingTimeMs(): number {
-        let total = 0;
-        for (const [key, values] of this.statsBag) {
-            for(const stats of values) {
-               const deltaTime = stats.endTimeMs - stats.startTimeMs;
-               total += deltaTime;
-            }
-        }
-        return total;
-    }
-
-    public toString(): string {
-        let output = `Collected stats by id:\n`;
-        for (const [key, values] of this.statsBag) {
-            output+=`    ${key}:`;
-            if(values.length === 1) {
-                const onlyStats = values[0];
-                const deltaTime = onlyStats.endTimeMs - onlyStats.startTimeMs;
-                const hasTimedout = deltaTime > onlyStats.timeoutMs;
-                output+=` took ${deltaTime}ms ${hasTimedout?`🔴 (TO: ${onlyStats.timeoutMs}ms)`:'🟢'}\n`
-                continue;
-            }
-            output+=`\n`;
-            for(const stats of values) {
-                const deltaTime = stats.endTimeMs - stats.startTimeMs;
-                const hasTimedout = deltaTime > stats.timeoutMs;
-                output+=`        [${stats.startTimeMs}]: took ${deltaTime}ms ${hasTimedout?`🔴 (TO: ${stats.timeoutMs}ms)`:'🟢'}\n`;
-            }
-        }
-        return output;
-    }
-}
-
-function buildStatsAndToWrapper(collector: StatsCollector, defaultTimeoutMs: number) {
-    return async <V, T extends Promise<V>>(id: string, promiseRunner: () => T, timeoutMs = defaultTimeoutMs): Promise<{res?: V, hasTimedout: boolean}> => {
-        const promise = wrapStatsCollector(promiseRunner, id, collector, timeoutMs);
-        return wrapTimeout(promise, timeoutMs);
-    }
-}
-
-// async function wrapStatsAndTo<V, T extends Promise<V>>(promiseRunner: () => T, params: {
-//     id: string,
-//     timeoutMs: number,
-//     collector: StatsCollector,
-// }): Promise<{res?: V, hasTimedout: boolean}> {
-//     const promise = wrapStatsCollector(promiseRunner, params.id, params.collector);
-//     return wrapTimeout(promise, params.timeoutMs);
-// }
-
-function wrapStatsCollector<T extends Promise<unknown>>(promiseRunner: () => T, id: string, collector: StatsCollector, timeoutMs: number): T {
-    const startTimeMs = Date.now();
-    const promise = promiseRunner();
-    promise.then(() => {
-        const endTimeMs = Date.now();
-        collector.push(id, {
-            startTimeMs,
-            endTimeMs,
-            timeoutMs,
-        });
-    });
-    return promise;
-}
 
 async function wrapTimeout<T>(promise: Promise<T> | undefined, timeout: number, ): Promise<{res?: T, hasTimedout: boolean}> {
     if (!promise) return { hasTimedout: false, res: undefined };
@@ -155,9 +69,7 @@ type AdSlotConfig = {
 export default class Advertising {
     private prebid?: Prebid;
     private keyvalueProviders: IAdvertisingKeyvalueProvider[] = [];
-    private readonly statsCollector = new StatsCollector();
     private static readonly DEFAULT_TIMEOUT_MS = 200 as const;
-    private wrapPromise; // complexe type infered at construct
 
     constructor(
         private _config: AdvertisingConfig
@@ -165,17 +77,16 @@ export default class Advertising {
         if (_config.usePrebid) {
             this.prebid = new Prebid(true);
         }
-
-        this.wrapPromise = buildStatsAndToWrapper(this.statsCollector, Advertising.DEFAULT_TIMEOUT_MS);
     }
 
     public get config() { return this._config}
 
+    /**
+     * setup and trigger ads for first page load
+     */
     public async init(): Promise<void> {
         // no ads for bots
         // if (isBot) return; // TODO
-
-        const startTimeMs = Date.now();
         const promises: Promise<unknown>[] = [];
         // setup wallpaper legacy stuff
         LegacyWallpaper.init(); // TODO refactor this shit
@@ -196,39 +107,14 @@ export default class Advertising {
 
         // eventually trigger ads
         await this.triggerAds();
-
-        // log perfs
-        const deltaTime = Date.now() - startTimeMs;
-        console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
-    }
-
-    private async initPrebid(): Promise<void> {
-        if (this.prebid !== undefined)  {
-            const prebid2 = this.prebid; // because type inference is shit here
-            const { hasTimedout } = await this.wrapPromise('prebid.init', () => prebid2.init());
-            if (hasTimedout) {
-                console.warn(`Prebid init has timedout, brebid is disabled.`);
-            }
-        }
-    }
-    private async resetPrebid(): Promise<void> {
-        if (this.prebid !== undefined)  {
-            const prebid2 = this.prebid; // because type inference is shit here
-            const { hasTimedout } = await this.wrapPromise('prebid.reset', () => prebid2.reset());
-            if (hasTimedout) {
-                console.warn(`Prebid reset has timedout, brebid is disabled.`);
-            }
-        }
     }
     
+    /**
+     * reset then setup and trigger ads for SPA page changes (swipe)
+     */
     public async reset(): Promise<void> {
         // no ads for bots
         // if (isBot) return; // TODO
-
-        const startTimeMs = Date.now();
-        // cleat stats
-        this.statsCollector.clear();
-
         const promises: Promise<unknown>[] = [];
 
         // clean wallpaper legacy stuff
@@ -248,12 +134,34 @@ export default class Advertising {
 
         // eventually trigger ads
         await this.triggerAds();
-
-        // log perfs
-        const deltaTime = Date.now() - startTimeMs;
-        console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
     }
 
+    /**
+     * Prebid init safe promise
+     */
+    private async initPrebid(): Promise<void> {
+        if (this.prebid !== undefined)  {
+            const { hasTimedout } = await wrapTimeout(this.prebid?.init(), Advertising.DEFAULT_TIMEOUT_MS);
+            if (hasTimedout) {
+                console.warn(`Prebid init has timedout, brebid is disabled.`);
+            }
+        }
+    }
+    /**
+     * Prebid reset safe promise
+     */
+    private async resetPrebid(): Promise<void> {
+        if (this.prebid !== undefined)  {
+            const { hasTimedout } = await wrapTimeout(this.prebid?.reset(), Advertising.DEFAULT_TIMEOUT_MS);
+            if (hasTimedout) {
+                console.warn(`Prebid reset has timedout, brebid is disabled.`);
+            }
+        }
+    }
+
+    /**
+     * Get config for a given slot (regarding its type and some other dynamic params) 
+     */
     private static getAdSlotConfig(adElement: HTMLElement): AdSlotConfig | undefined {
         try {
             const adType = adElement.getAttribute('data-ad-type');
@@ -296,36 +204,6 @@ export default class Advertising {
         }
     }
 
-    private static getSlotSpecificKeyvalues(adElement: HTMLElement): Map<string, string> {
-        // dynamic atf detection
-        const isAtf = Advertising.isAtf(adElement);    
-
-        // build slot specifi keyvalues
-        const keyvalues = new Map();
-        keyvalues.set('posn', isAtf ? 'atf' : 'btf');
-
-        return keyvalues;
-    }
-
-    private static getGlobalKeyvalues(config: AdvertisingConfig): Map<string, string> {
-
-        // dyanmic debug
-        const dfptValue = 'wallpaper' || new URLSearchParams(window.location.search.toLowerCase()).get('dbg');
-
-       
-        const globalKeyvalues = config.keyValues || {};
-        const keyvalues = new Map(Object.entries(globalKeyvalues));
-        if (dfptValue && Math.random() > 0.5) keyvalues.set('dfpt', dfptValue); // TODO: remove random
-
-        return keyvalues;
-    }
-
-    private static isAtf(adElement: HTMLElement): boolean {
-        const isAtf = InView.isVisiblePercent(adElement, .5);
-        if (isAtf) adElement.classList.add('advertising--is-atf');
-        return isAtf
-    }
-
     /**
      * Bind handlers to googletag ads events.
      * This can be done once for all because handlers are stateless.
@@ -355,6 +233,7 @@ export default class Advertising {
     
     }
 
+    /** (i) when an ad is rendered, viewability already impacted */
     private handleSlotRenderEnded(event: googletag.events.SlotRenderEndedEvent): void {
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--rendered');
@@ -363,6 +242,7 @@ export default class Advertising {
         }
     }
 
+    /** (i) when an ad viewed, (viewability = ok) */
     private handleImpressionViewable(event: googletag.events.ImpressionViewableEvent): void {
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--viewed');
@@ -379,8 +259,8 @@ export default class Advertising {
 
     /**
      * Restore everything on our side and googletag side to destroy/reset/unload everything we can.
-     *   1 - restore desired adSlot Ids (from data-ad-id)
-     *   2 - redefine adSlots with googletag
+     *   1 - restore desired adSlot Ids (from data-ad-id) (DOM)
+     *   2 - redefine adSlots with googletag (Googletag)
      */
     private destroyAllAdSlots(): void {
         // 1) remove old slot ids
@@ -415,7 +295,7 @@ export default class Advertising {
      * (i) native googletag lazyload is enabled so display ads is behaving smartly :)
      */
     private createAllAdSlots(): void {
-        // get all (active) ad containers
+        // get all (active) ad containers (= in active slide or outside swiper)
         const querySelectorOutsideSwiper = SwiperController.buildClassSelectorOutsideSwiper('advertising'); // TODO: optim: could be done at init only
         const querySelectorInsideActiveSlide = SwiperController.buildClassSelectorInsideActiveSlide('advertising');
         const adElementsToEnable = [
@@ -444,8 +324,7 @@ export default class Advertising {
         
                 // 2) await bidding if prebid
                 if (this.prebid) {
-                    const prebid2 = this.prebid;
-                    const { hasTimedout } = await this.wrapPromise('prebid.runBids', () => prebid2.runBids(), 1000);
+                    const { hasTimedout } = await wrapTimeout(this.prebid?.runBids(), 500); // TODO: make timeout const
                     if (hasTimedout) console.warn('Prebid is awtivated but has been timedout after 3s by Advertising.ts');
                 }
         
@@ -457,6 +336,9 @@ export default class Advertising {
         });
     }
 
+    /**
+     * Setup the global googletag config before using it
+     */
     private configureGoogletag(): void {
         googletag.cmd.push(() => {
             // global config
@@ -472,6 +354,39 @@ export default class Advertising {
         });
     }
 
+    /**
+     * Returns slot-specific Keyvalues (a.k.a tageting values)
+     */
+    private static getSlotSpecificKeyvalues(adElement: HTMLElement): Map<string, string> {
+        // dynamic atf detection
+        const isAtf = Advertising.isAtf(adElement);    
+
+        // build slot specifi keyvalues
+        const keyvalues = new Map();
+        keyvalues.set('posn', isAtf ? 'atf' : 'btf');
+
+        return keyvalues;
+    }
+
+    /**
+     * Returns gloabal Keyvalues (a.k.a tageting config)
+     */
+    private static getGlobalKeyvalues(config: AdvertisingConfig): Map<string, string> {
+
+        // dyanmic debug
+        const dfptValue = 'wallpaper' || new URLSearchParams(window.location.search.toLowerCase()).get('dbg');
+
+        
+        const globalKeyvalues = config.keyValues || {};
+        const keyvalues = new Map(Object.entries(globalKeyvalues));
+        if (dfptValue && Math.random() > 0.5) keyvalues.set('dfpt', dfptValue); // TODO: PoC random force wallpaper
+
+        return keyvalues;
+    }
+
+    /**
+     * Call setTargeting() for all global external keyvalue providers + ou own global keyvalues (this.getGlobalKeyvalues())
+     */
     private setGlobalKeyvalues(): Promise<void> {
         return new Promise(resolve => {
             googletag.cmd.push(async () => {
@@ -490,12 +405,12 @@ export default class Advertising {
                     const key = provider.getAdvertisingKvKey();
                     const providerName = provider.constructor.name;
                     let hasTimedout = false;
-                    const res = await this.wrapPromise(providerName, () => provider.getAdvertisingKvValue().then((value) => {
+                    const res = await wrapTimeout(provider.getAdvertisingKvValue().then((value) => {
                         googletag.pubads().setTargeting(key, value);
                         if (hasTimedout) {
                             console.debug(`The Thirdparty Keyvalue provider [${providerName}] for the keyvalue [${key}] eventually resolved after timeout [${Advertising.DEFAULT_TIMEOUT_MS}ms].`)
                         }
-                    }));
+                    }), Advertising.DEFAULT_TIMEOUT_MS);
                     hasTimedout = res.hasTimedout;
                     if (hasTimedout) {
                         console.warn(`The Thirdparty Keyvalue provider [${providerName}] for the keyvalue [${key}] has been timed out [${Advertising.DEFAULT_TIMEOUT_MS}ms] but will continue run in background and asynchonously set keyvalues when it eventually resolves.`)
@@ -595,7 +510,9 @@ export default class Advertising {
         this.keyvalueProviders.push(provider);
     }
 
-    public logStats(): void {
-        console.debug(this.statsCollector.toString())
+    private static isAtf(adElement: HTMLElement): boolean {
+        const isAtf = InView.isVisiblePercent(adElement, .5);
+        if (isAtf) adElement.classList.add('advertising--is-atf');
+        return isAtf
     }
 }

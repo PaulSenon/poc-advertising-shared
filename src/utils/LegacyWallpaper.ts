@@ -1,3 +1,8 @@
+/**
+ * IGNORE THIS FILE, THIS IS HERE TO ISOLATE NASTY LEGACY CODE
+ * WILL BE REFACTORED LATER
+ */
+
 
 type WallpaperData = {
     backgroundColor?: string;

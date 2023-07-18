@@ -7,6 +7,10 @@ import { Manipulation, Navigation, Keyboard, Virtual } from 'swiper/modules';
 export default class SwiperController {
   private swiper: Swiper;
   private prevActiveSlide?: HTMLElement;
+
+  /**
+   * Ignore this, not interresting for PoC
+   */
   constructor() {
     this.swiper = new Swiper('.swiper', {
       modules: [Navigation, Manipulation, Keyboard, Virtual],
@@ -31,40 +35,27 @@ export default class SwiperController {
         slides: (() => {
           const slides = [];
           for (var i = 0; i < 50; i += 1) {
-            slides.push(this.generateTestSlide());
+            slides.push(this.generateTestSlide(i));
           }
           return slides;
         })(),
-      },
-      on: {
-        // slideChangeTransitionEnd(): void {
-        //   document.body.classList.remove('swiper-transition')
-        // },
-        // slideChangeTransitionStart(): void {
-        //   console.debug('SQLFJSDJFLSDKJFLKDJ')
-        //   document.body.classList.add('swiper-transition')
-        // }
-        sliderMove: (swiper, event) => {
-
-        },
       }
     });
   }
 
+  /**
+   * Ignore this, not interresting for PoC
+   */
   public init() {
     void this.swiper;
     this.prevActiveSlide = SwiperController.getActiveSlide();
     this.swiper.wrapperEl.addEventListener('transitionstart', (e) => {
-      // TODO: maybe webkit event too ?
-
       // 0) on ignore si c'est un autre élément
       if (e.target !== this.swiper.wrapperEl) return;
       document.body.classList.add('swiper-transition')
       SwiperController.getActiveSlide()?.classList.add('swiper-slide-active-kept-while-tansitioning');
     });
     this.swiper.wrapperEl.addEventListener('transitionend', (e) => {
-      // TODO: maybe webkit event too ?
-
       // 0) on ignore si c'est un autre élément
       if (e.target !== this.swiper.wrapperEl) return;
       
@@ -80,11 +71,17 @@ export default class SwiperController {
     });
   }
 
-  private generateTestSlide(): string {
+  /**
+   * Generate a test slide/article with:
+   *  - ads with slide index in id (to mock what's happening on euronews.com)
+   *  - some non visible ads (to mock mobile only ads that are display none on euronews.com, ad call should not be triggered for those)
+   *  - some text/image (paragraph count is random, therefore inbetween ads count may varry for each article)
+   */
+  private generateTestSlide(index: number): string {
     let adCount = 0;
     const buildAd = () => {
       adCount++;
-      return `<div data-ad-id="adzone-halfpage-${adCount}" data-ad-type="halfpage" data-ad-position="${adCount}" class="advertising js-adzone advertising-halfpage${adCount%2===0?' u-hide-for-all':''}"></div>`
+      return `<div data-ad-id="adzone-halfpage-${index}-${adCount}" data-ad-type="halfpage" data-ad-position="${adCount}" class="advertising js-adzone advertising-halfpage${adCount%2===0?' u-hide-for-all':''}"></div>`
     }
     const randomIntFromInterval = (min: number, max: number) => { // min and max included 
       return Math.floor(Math.random() * (max - min + 1) + min)
@@ -94,15 +91,11 @@ export default class SwiperController {
     for(let i = 0; i<nbP; i++) {
       paragraps += `<p>${faker.lorem.lines({min:10, max: 50})}</p>${buildAd()}`;
     }
-    // const paragraps = faker.lorem.text({min: 3, max:8}, '<<<STOP>>>').split('<<<STOP>>>').reduce((acc, s) => {
-    //   acc += `<p>${s}</p>${buildAd()}`;
-    //   return acc;
-    // }, '');
+
     return `
       <article>
         <img src="${faker.image.urlLoremFlickr()}" height="480" widht="640" loading="lazy" class="hide" onload="this.classList.remove('hide')"/>
         <h1>${faker.lorem.lines(1)}</h1>
-        <div data-ad-id="adzone-outstream-1" data-ad-type="outstream" data-ad-position="1" class="advertising js-adzone advertising-outstream"></div>
         ${paragraps}
       </article>
     `;

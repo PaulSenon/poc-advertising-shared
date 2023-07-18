@@ -1,4 +1,8 @@
 export default class InView {
+
+  /**
+   * Simply tell if a given DOM element is in viewport by x%
+   */
   public static isVisiblePercent(element: HTMLElement, percent: number): boolean {
       const rect = element.getBoundingClientRect();
     

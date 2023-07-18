@@ -1,12 +1,16 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <meta charset="utf-8" />
     <title>LoremIpsumNews</title>
+    
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+
+    <!-- googletag & prebid.js-->
     <script defer src="https://securepubads.g.doubleclick.net/tag/js/gpt.js"></script>
     <script defer src="//cdn.jsdelivr.net/npm/prebid.js@latest/dist/not-for-prod/prebid.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
   </head>
+
   <body class="dfp-wallpapered">
     <!-- wallpaper link zones -->
     <span class="background-image-container"></span>
@@ -21,8 +25,6 @@
     </header>
     
     <!-- out of contend ads -->
-    <!-- <div data-ad-id="adzone-leaderboard-1" data-ad-type="leaderboard" data-ad-position="1" class="advertising js-adzone advertising-leaderboard top-leaderboard"></div> -->
-    <!-- <div data-ad-id="adzone-wallpaper-1" data-ad-type="wallpaper" data-ad-position="1" class="advertising js-adzone advertising-wallpaper offscreen-adzone"></div> -->
     <div data-ad-id="adzone-leaderboard-wallpaper-1" data-ad-type="leaderboard-wallpaper" data-ad-position="1" class="u-hide-for-mobile advertising js-adzone advertising-leaderboard-wallpaper top-leaderboard"></div>
 
     <!-- swiper controls -->
@@ -38,8 +40,7 @@
       </div>
     </div>
 
-    <!-- <div data-ad-id="adzone-outstream-1" data-ad-type="outstream" data-ad-position="1" class="advertising js-adzone advertising-outstream"></div> -->
-
-    <script type="module" src="/src/main.ts"></script>
+    <!-- js entrypoint -->
+    <script type="module" src="/src/index.ts"></script>
   </body>
 </html>
