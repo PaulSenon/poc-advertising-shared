@@ -1,10 +1,12 @@
-import BreakPointDetector from "../utils/BreakPointDetector";
-import InView from "../utils/InView";
-import LegacyWallpaper from "../utils/LegacyWallpaper";
-import SwiperController from "./Swiper";
-import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "../config/adSlotConfig";
-import Prebid from './Prebid';
-import IAdvertisingKeyvalueProvider from "../utils/IAdvertisingKeyvalueProvider";
+import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "../../config/adSlotConfig";
+import BreakPointDetector from "../../utils/BreakPointDetector";
+import InView from "../../utils/InView";
+import StatsCollector from "../../utils/StatsCollector";
+import SwiperController from "../Swiper";
+import { AdsLifecycleHooksRunner } from "./AdsLifecycleHooksRunner";
+import IAdvertisingLifecycleHook from "./IAdvertisingLifecycleHook";
+import LegacyWallpaper from "./LegacyWallpaper";
+
 
 /**
  * LEXIQUE:
@@ -31,20 +33,6 @@ import IAdvertisingKeyvalueProvider from "../utils/IAdvertisingKeyvalueProvider"
  *   - data-ad-position => required, index of the ad (per ad-type, inside on slide) // TODO: is is usefull ???? shall we rename in ad-index ?
  */
 
-async function wrapTimeout<T>(promise: Promise<T> | undefined, timeout: number, ): Promise<{res?: T, hasTimedout: boolean}> {
-    if (!promise) return { hasTimedout: false, res: undefined };
-    const timeoutPromise: Promise<'timedout'> = new Promise((resolve) => setTimeout(() => resolve('timedout'), timeout));
-    const result = await Promise.race([
-        promise,
-        timeoutPromise,
-    ]);
-    const hasTimedout = result === 'timedout';
-    return {
-        res: hasTimedout ? undefined : result,
-        hasTimedout,
-    }
-}
-
 declare global {
     interface Window {
       googletag?: typeof googletag;
@@ -55,10 +43,9 @@ type AdvertisingConfig = {
     fullAdUnit: string; // TODO must be build php side (does not exists yet)
     keyValues?: Record<string, string>;
     lazyLoadOffsetPx?: number;
-    usePrebid?: boolean;
 }
 
-type AdSlotConfig = {
+export type AdSlotConfig = {
     adId: string, 
     adPosition: number,
     adType: keyof typeof AdSlotKind,
@@ -67,101 +54,83 @@ type AdSlotConfig = {
 }
 
 export default class Advertising {
-    private prebid?: Prebid;
-    private keyvalueProviders: IAdvertisingKeyvalueProvider[] = [];
-    private static readonly DEFAULT_TIMEOUT_MS = 200 as const;
+    private readonly statsCollector = new StatsCollector();
+    private safeHooksManager: AdsLifecycleHooksRunner;
 
     constructor(
-        private _config: AdvertisingConfig
+        private _config: AdvertisingConfig,
+        hooks: IAdvertisingLifecycleHook[] = [],
     ) {
-        if (_config.usePrebid) {
-            this.prebid = new Prebid(true);
-        }
+        this.safeHooksManager = new AdsLifecycleHooksRunner(hooks, this.statsCollector);
     }
 
     public get config() { return this._config}
 
-    /**
-     * setup and trigger ads for first page load
-     */
     public async init(): Promise<void> {
         // no ads for bots
-        // if (isBot) return; // TODO
-        const promises: Promise<unknown>[] = [];
+        if (Advertising.isBot()) return;
+
+        // stats setup
+        const startTimeMs = Date.now();
+
         // setup wallpaper legacy stuff
         LegacyWallpaper.init(); // TODO refactor this shit
         // define global googletag API
         this.defineGooletagApi();
-        // init prebid if defined
-        promises.push(this.initPrebid());
+
+        // [HOOK]: before googletag init
+        await this.safeHooksManager.runHooksBeforeGoogleTagInit();
+
         // configure googletag
         this.configureGoogletag();
         // register googletag.pubads() listeners once for all
         this.registerListerners();
+
         // set keyvalues
-        promises.push(this.setGlobalKeyvalues());
+        await this.setGlobalKeyvalues();
         // create all ad slots
-        this.createAllAdSlots();
-        // await init promises in parallel
-        await Promise.all(promises);
+        await this.createAllAdSlots();
 
         // eventually trigger ads
         await this.triggerAds();
+
+        // log perfs
+        const deltaTime = Date.now() - startTimeMs;
+        console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
     }
     
-    /**
-     * reset then setup and trigger ads for SPA page changes (swipe)
-     */
     public async reset(): Promise<void> {
         // no ads for bots
-        // if (isBot) return; // TODO
-        const promises: Promise<unknown>[] = [];
+        if (Advertising.isBot()) return;
+
+        // stats setup
+        const startTimeMs = Date.now();
+        this.statsCollector.clear();
+
+        // [HOOK]: before destroy all slots
+        await this.safeHooksManager.runHooksDestroyAllSlots();
 
         // clean wallpaper legacy stuff
         LegacyWallpaper.clean(); // TODO refactor this shit
         // destroy all ad slots
         this.destroyAllAdSlots();
-        // reset prebid
-        promises.push(this.resetPrebid());
+
         // rewrite global ad config
         // TODO how ??
+
         // set keyvalues
-        promises.push(this.setGlobalKeyvalues());
+        await this.setGlobalKeyvalues();
         // create all ad slots
-        this.createAllAdSlots();
-        // await init promises in parallel
-        await Promise.all(promises);
+        await this.createAllAdSlots();
 
         // eventually trigger ads
         await this.triggerAds();
+
+        // log perfs
+        const deltaTime = Date.now() - startTimeMs;
+        console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
     }
 
-    /**
-     * Prebid init safe promise
-     */
-    private async initPrebid(): Promise<void> {
-        if (this.prebid !== undefined)  {
-            const { hasTimedout } = await wrapTimeout(this.prebid?.init(), Advertising.DEFAULT_TIMEOUT_MS);
-            if (hasTimedout) {
-                console.warn(`Prebid init has timedout, brebid is disabled.`);
-            }
-        }
-    }
-    /**
-     * Prebid reset safe promise
-     */
-    private async resetPrebid(): Promise<void> {
-        if (this.prebid !== undefined)  {
-            const { hasTimedout } = await wrapTimeout(this.prebid?.reset(), Advertising.DEFAULT_TIMEOUT_MS);
-            if (hasTimedout) {
-                console.warn(`Prebid reset has timedout, brebid is disabled.`);
-            }
-        }
-    }
-
-    /**
-     * Get config for a given slot (regarding its type and some other dynamic params) 
-     */
     private static getAdSlotConfig(adElement: HTMLElement): AdSlotConfig | undefined {
         try {
             const adType = adElement.getAttribute('data-ad-type');
@@ -204,6 +173,36 @@ export default class Advertising {
         }
     }
 
+    private static getSlotSpecificKeyvalues(adElement: HTMLElement): Map<string, string> {
+        // dynamic atf detection
+        const isAtf = Advertising.isAtf(adElement);    
+
+        // build slot specifi keyvalues
+        const keyvalues = new Map();
+        keyvalues.set('posn', isAtf ? 'atf' : 'btf');
+
+        return keyvalues;
+    }
+
+    private static getGlobalKeyvalues(config: AdvertisingConfig): Map<string, string> {
+
+        // dyanmic debug
+        const dfptValue = 'wallpaper' || new URLSearchParams(window.location.search.toLowerCase()).get('dbg');
+
+       
+        const globalKeyvalues = config.keyValues || {};
+        const keyvalues = new Map(Object.entries(globalKeyvalues));
+        if (dfptValue && Math.random() > 0.5) keyvalues.set('dfpt', dfptValue); // TODO: remove random
+
+        return keyvalues;
+    }
+
+    private static isAtf(adElement: HTMLElement): boolean {
+        const isAtf = InView.isVisiblePercent(adElement, .5);
+        if (isAtf) adElement.classList.add('advertising--is-atf');
+        return isAtf
+    }
+
     /**
      * Bind handlers to googletag ads events.
      * This can be done once for all because handlers are stateless.
@@ -233,7 +232,6 @@ export default class Advertising {
     
     }
 
-    /** (i) when an ad is rendered, viewability already impacted */
     private handleSlotRenderEnded(event: googletag.events.SlotRenderEndedEvent): void {
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--rendered');
@@ -242,25 +240,24 @@ export default class Advertising {
         }
     }
 
-    /** (i) when an ad viewed, (viewability = ok) */
     private handleImpressionViewable(event: googletag.events.ImpressionViewableEvent): void {
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--viewed');
     }
 
     /**
-     * Use this so rewrite config (e.g. between swipe)
+     * Use this so rewrite config keyvalues (e.g. between swipe)
      * /!\ After this, you have to load it. 
      *     Just seting it has no effect if you don't use it afterward /!\
      */
-    public setConfig(config: AdvertisingConfig): void {
-        this._config = config;
+    public setKeyvalues(keyvalues: Record<string, string>): void {
+        this._config.keyValues = keyvalues;
     }
 
     /**
      * Restore everything on our side and googletag side to destroy/reset/unload everything we can.
-     *   1 - restore desired adSlot Ids (from data-ad-id) (DOM)
-     *   2 - redefine adSlots with googletag (Googletag)
+     *   1 - restore desired adSlot Ids (from data-ad-id)
+     *   2 - redefine adSlots with googletag
      */
     private destroyAllAdSlots(): void {
         // 1) remove old slot ids
@@ -294,25 +291,36 @@ export default class Advertising {
      * 
      * (i) native googletag lazyload is enabled so display ads is behaving smartly :)
      */
-    private createAllAdSlots(): void {
-        // get all (active) ad containers (= in active slide or outside swiper)
-        const querySelectorOutsideSwiper = SwiperController.buildClassSelectorOutsideSwiper('advertising'); // TODO: optim: could be done at init only
-        const querySelectorInsideActiveSlide = SwiperController.buildClassSelectorInsideActiveSlide('advertising');
-        const adElementsToEnable = [
-            ...document.querySelectorAll(querySelectorOutsideSwiper),
-            ...document.querySelectorAll(querySelectorInsideActiveSlide)
-        ] as HTMLElement[];
-        console.dir(adElementsToEnable); // TODO: remove
+    private createAllAdSlots(): Promise<void> {
+        return new Promise(resolve => {
+            // get all (active) ad containers
+            const querySelectorOutsideSwiper = SwiperController.buildClassSelectorOutsideSwiper('advertising'); // TODO: optim: could be done at init only
+            const querySelectorInsideActiveSlide = SwiperController.buildClassSelectorInsideActiveSlide('advertising');
+            const adElementsToEnable = [
+                ...document.querySelectorAll(querySelectorOutsideSwiper),
+                ...document.querySelectorAll(querySelectorInsideActiveSlide)
+            ] as HTMLElement[];
+            console.dir(adElementsToEnable); // TODO: remove
+    
+            // do googletag stuff
+            googletag.cmd.push(async () => {
+                // 1) create all adSlots
+                const adSlotsInfos: {slot: googletag.Slot, element: HTMLElement, config: AdSlotConfig}[] = [];
+                for (const adElement of adElementsToEnable) {
+                    const slotInfos = this.googletagCreateAdSlot(adElement);
+                    if (!slotInfos) continue;
+                    adSlotsInfos.push(slotInfos);
+                }
 
-        // do googletag stuff
-        googletag.cmd.push(async () => {
-            // 1) create all adSlots
-            const adSlots: googletag.Slot[] = [];
-            for (const adElement of adElementsToEnable) {
-                const adSlot = this.googletagCreateAdSlot(adElement);
-                if (!adSlot) continue;
-                adSlots.push(adSlot);
-            }
+                // [HOOK] handleAllSlotCreated
+                await this.safeHooksManager.runHooksAllSlotsCreated(adSlotsInfos.map(i => ({
+                    slot: i.slot,
+                    element: i.element,
+                    config: i.config,
+                })));
+
+                return resolve();
+            });
         });
     }
 
@@ -322,11 +330,8 @@ export default class Advertising {
                 // 1) tell googletag everything is configured
                 googletag.enableServices(); 
         
-                // 2) await bidding if prebid
-                if (this.prebid) {
-                    const { hasTimedout } = await wrapTimeout(this.prebid?.runBids(), 500); // TODO: make timeout const
-                    if (hasTimedout) console.warn('Prebid is awtivated but has been timedout after 3s by Advertising.ts');
-                }
+                // 2) [HOOK]: before calling ads
+                await this.safeHooksManager.runHooksBeforeCallingAds();
         
                 // 3) trigger ad calls
                 googletag.pubads().refresh(); // necessarry because "disableInitialLoad()""
@@ -336,9 +341,6 @@ export default class Advertising {
         });
     }
 
-    /**
-     * Setup the global googletag config before using it
-     */
     private configureGoogletag(): void {
         googletag.cmd.push(() => {
             // global config
@@ -354,39 +356,6 @@ export default class Advertising {
         });
     }
 
-    /**
-     * Returns slot-specific Keyvalues (a.k.a tageting values)
-     */
-    private static getSlotSpecificKeyvalues(adElement: HTMLElement): Map<string, string> {
-        // dynamic atf detection
-        const isAtf = Advertising.isAtf(adElement);    
-
-        // build slot specifi keyvalues
-        const keyvalues = new Map();
-        keyvalues.set('posn', isAtf ? 'atf' : 'btf');
-
-        return keyvalues;
-    }
-
-    /**
-     * Returns gloabal Keyvalues (a.k.a tageting config)
-     */
-    private static getGlobalKeyvalues(config: AdvertisingConfig): Map<string, string> {
-
-        // dyanmic debug
-        const dfptValue = 'wallpaper' || new URLSearchParams(window.location.search.toLowerCase()).get('dbg');
-
-        
-        const globalKeyvalues = config.keyValues || {};
-        const keyvalues = new Map(Object.entries(globalKeyvalues));
-        if (dfptValue && Math.random() > 0.5) keyvalues.set('dfpt', dfptValue); // TODO: PoC random force wallpaper
-
-        return keyvalues;
-    }
-
-    /**
-     * Call setTargeting() for all global external keyvalue providers + ou own global keyvalues (this.getGlobalKeyvalues())
-     */
     private setGlobalKeyvalues(): Promise<void> {
         return new Promise(resolve => {
             googletag.cmd.push(async () => {
@@ -394,29 +363,16 @@ export default class Advertising {
                 // static targeting (a.k.a keyvalues)
                 const globalKeyvalues = Advertising.getGlobalKeyvalues(this.config);
                 for(const [key, value] of globalKeyvalues) {
-                    googletag.pubads().setTargeting(key, value);
+                    googletag.pubads().setTargeting(key, value.toString());
                 }
-
-                //thirdparties targeting (a.k.a keyvalues)
-                const setTpTargetingPromises = this.keyvalueProviders.map(async provider => {
-                    // we create a promise that always setTargeting in then, 
-                    // so even when it times out, it still eventually set the 
-                    // targeting value for the subsequent ad calls
-                    const key = provider.getAdvertisingKvKey();
-                    const providerName = provider.constructor.name;
-                    let hasTimedout = false;
-                    const res = await wrapTimeout(provider.getAdvertisingKvValue().then((value) => {
+                
+                // HOOK: getExternalKeyvalues
+                await this.safeHooksManager.runHooksExternalKeyvalues((kv) => {
+                    for(const [key, value] of Object.entries(kv)) {
                         googletag.pubads().setTargeting(key, value);
-                        if (hasTimedout) {
-                            console.debug(`The Thirdparty Keyvalue provider [${providerName}] for the keyvalue [${key}] eventually resolved after timeout [${Advertising.DEFAULT_TIMEOUT_MS}ms].`)
-                        }
-                    }), Advertising.DEFAULT_TIMEOUT_MS);
-                    hasTimedout = res.hasTimedout;
-                    if (hasTimedout) {
-                        console.warn(`The Thirdparty Keyvalue provider [${providerName}] for the keyvalue [${key}] has been timed out [${Advertising.DEFAULT_TIMEOUT_MS}ms] but will continue run in background and asynchonously set keyvalues when it eventually resolves.`)
                     }
-                })
-                await Promise.all(setTpTargetingPromises);
+                });
+
                 return resolve();
             })
         });
@@ -425,7 +381,7 @@ export default class Advertising {
     /**
      * /!\ MUST BE IN CALLED INSIDE googletag.cmd.push() context
      */
-    private googletagCreateAdSlot(adElement: HTMLElement): googletag.Slot | undefined {
+    private googletagCreateAdSlot(adElement: HTMLElement): {slot: googletag.Slot, element: HTMLElement, config: AdSlotConfig} | undefined {
         // set adElement Id
         Advertising.loadAndSetHtmlIdForAdElement(adElement);
 
@@ -454,12 +410,18 @@ export default class Advertising {
         }
         adSlot.addService(googletag.pubads());
 
-        // configure adSlot for prebid
-        this.prebid?.addAdUnit({
-            id: slotConfig.adId,
-            sizes: slotConfig.sizes,
-            // pos: TODO but need to have complex rules in getAdSlotConfig()
+        // [HOOK] (sync) handleSlotCreated
+        this.safeHooksManager.runHooksSlotCreated({
+            element: adElement,
+            slot: adSlot,
+            config: slotConfig
         });
+
+        return {
+            slot: adSlot,
+            element: adElement,
+            config: slotConfig,
+        }
     }
 
     /**
@@ -506,13 +468,11 @@ export default class Advertising {
         return adElement.classList.contains('offscreen-adzone');
     }
 
-    public addKeyvalueProvider(provider: IAdvertisingKeyvalueProvider): void {
-        this.keyvalueProviders.push(provider);
+    public getStatsCollector(): StatsCollector {
+        return this.statsCollector;
     }
 
-    private static isAtf(adElement: HTMLElement): boolean {
-        const isAtf = InView.isVisiblePercent(adElement, .5);
-        if (isAtf) adElement.classList.add('advertising--is-atf');
-        return isAtf
+    private static isBot(): boolean { // TODO move in browser detection class helpers
+        return false
     }
 }

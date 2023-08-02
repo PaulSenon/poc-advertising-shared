@@ -1,3 +1,5 @@
+import IAdvertisingLifecycleHook, { AdSlotData } from "../IAdvertisingLifecycleHook";
+
 declare global {
     interface Window {
         pbjs: { 
@@ -42,41 +44,19 @@ type Bid = {
     params: Record<string, string|number>,
 }
 
-// MOCK BIDDERS CONFIG PROVIDER (could be yieldbird ?)
-function fetchBiddersConfig(): Promise<Bid[]> {
-    return Promise.resolve([
-        { // TODO: missing specs, fake bidder
-            "bidder": "my-super-bidder",
-            "params": {
-                "toto": "titi",
-            }
-        }
-    ])
-}
-
-/**
- * This is a Prebid service class wrapper so it's well isolated from the ad core
- */
-export default class Prebid {
+export default class Prebid implements IAdvertisingLifecycleHook {
     private adUnits: AdUnitConfig[] = [];
-    private biddersConfig: Bid[] = [];
 
     public constructor(private readonly isDebug = false) {
 
     }
 
-    /**
-     * Prebid initial setup (define api/load scripts)
-     */
-    public async init(): Promise<void> {
+    public handleBeforeGoogletagInit(): Promise<void> {
         this.definePrebidApi();
-        this.biddersConfig = await fetchBiddersConfig();
+        return Promise.resolve();
     }
 
-    /**
-     * Recycle prebid (like init but with a clean first)
-     */
-    public reset(): Promise<void> {
+    public handleDestroyAllSlots(): Promise<void> {
         this.adUnits = [];
         window.pbjs.initAdserverSet = false;
         // ref: https://docs.prebid.org/dev-docs/publisher-api-reference/removeAdUnit.html
@@ -84,21 +64,16 @@ export default class Prebid {
         return Promise.resolve();
     }
 
-    /**
-     * Define the prebid API if needed
-     */
     public definePrebidApi(): void {
         window.pbjs = window.pbjs || { que: [] };
     }
 
     /**
-     * /!\ must be run in googletag.cmd.push context /!\
-     * 
-     * Run bids and resolves when bidders timedout or when bid successful. 
-     * Should await this promise before calling ads (googletag.pubads().refresh())
-     * You might want to timeout this promise anyway.
+     * /!\ must be run in googletag.cmd.Push context
+     * you should start doing ad calls with googletag.pubads().refresh(); when it resolves
+     * you might want to timeout this anyway
      */
-    public runBids(): Promise<void> {
+    public handleBeforeCallingAds(): Promise<void> {
         // setup prebid global config
         window.pbjs.setConfig({
             debug: this.isDebug || false,
@@ -106,15 +81,13 @@ export default class Prebid {
                 url: false
             },
         });
-
         // setup prebid adUnits config
         window.pbjs.addAdUnits(this.adUnits);
 
-        // promisify bid run
         const biddingPromise: Promise<void> = new Promise(resovle => {
             window.pbjs.que.push(() => {
                 window.pbjs.requestBids({
-                    timeout: 1000, // TODO: const
+                    timeout: 1000, // todo const
                     bidsBackHandler: () => {
                         if (window.pbjs.initAdserverSet) return;
     
@@ -128,24 +101,27 @@ export default class Prebid {
                 });
             });
         });
+        // await new Promise(resolve => setTimeout(resolve, 500))
 
         return biddingPromise;
     }
 
-    public addAdUnit(data: {
-        id: string,
-        sizes: number[] | number[][],
-        pos?: AdPosition, 
-    }): void {
-        this.adUnits.push({
-            code: data.id,
+    public handleAllSlotsCreated(adSlotsData: AdSlotData[]): Promise<void> {
+        this.adUnits = adSlotsData.map(data => ({
+            code: data.slot.getSlotElementId(),
             mediaTypes: {
                 banner: {
-                    sizes: data.sizes,
-                    pos: data.pos || AdPosition.UNKNOWN,
+                    sizes: data.config.sizes,
+                    pos: undefined, // TODO
                 }
             },
-            bids: this.biddersConfig
-        })
+            bids: [{
+                "bidder": "ogury",
+                "params": {
+                }
+            }]
+        }));
+
+        return Promise.resolve();
     }
 }
