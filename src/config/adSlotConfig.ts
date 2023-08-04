@@ -4,8 +4,8 @@ enum AdSlotKind {
     leaderboard,
     wallpaper,
     halfpage,
-    "leaderboard-wallpaper",
-    "sticky-floor",
+    leaderboardWallpaper,
+    stickyFloor,
     outstream,
 }
 
@@ -36,7 +36,7 @@ const adSlotsTargetingConfig: AdSlotsTargetingConfig = {
             S: [],
         },
     },
-    'leaderboard-wallpaper': {
+    leaderboardWallpaper: {
         sizes: { // DONE
             XXL: [[1,1], [970, 250], [970, 90], [728, 90]],
             XL: [[1,1], [970, 250], [970, 90], [728, 90]],
@@ -54,7 +54,7 @@ const adSlotsTargetingConfig: AdSlotsTargetingConfig = {
             S: [[300, 600], [300, 250]],
         }
     },
-    "sticky-floor": {
+    stickyFloor: {
         sizes: {
             XXL: [[320, 50]],
             XL: [[320, 50]],

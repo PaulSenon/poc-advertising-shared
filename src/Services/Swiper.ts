@@ -3,6 +3,7 @@ import Swiper from 'swiper';
 import 'swiper/css';
 import 'swiper/css/navigation';
 import { Manipulation, Navigation, Keyboard, Virtual } from 'swiper/modules';
+import ServerDataProvider from './ServerDataProvider';
 
 export default class SwiperController {
   private swiper: Swiper;
@@ -65,19 +66,25 @@ export default class SwiperController {
         window.scroll(0,104);
         document.body.classList.remove('swiper-transition')
         /**@ts-ignore */
-        window.advertising.setKeyvalues({ // new keyvalue should be received with slide in server response
-          swipeIndex: this.swiper.activeIndex, // this is just to check we are updating successfully between swipes
-          lng: 'en',
-          page: 'article',
-          nws_id: '2298886',
-          nwsctr_id: '7681866',
-          themes: 'news',
-          vertical: 'news',
-          program: 'euronews-witness',
-          video_duration: '600',
-          technical_tags: 'video-auto-play',
-          source: 'euronews',
-      });
+        ServerDataProvider.getInstance().setServerData({
+          advertisingData: { 
+            fullAdUnit: '/6458/en_euronews_new/green/climate/climate',
+            keyValues: { // new keyvalue should be received with slide in server response
+              swipeIndex: this.swiper.activeIndex.toString(), // this is just to check we are updating successfully between swipes
+              lng: 'en',
+              page: 'article',
+              nws_id: '2298886',
+              nwsctr_id: '7681866',
+              themes: 'news',
+              vertical: 'news',
+              program: 'euronews-witness',
+              video_duration: '600',
+              technical_tags: 'video-auto-play',
+              source: 'euronews',
+            },
+            lazyLoadOffsetPx: 0
+          }
+        })
         /**@ts-ignore */
         window.advertising.reset();
         this.prevActiveSlide = SwiperController.getActiveSlide();

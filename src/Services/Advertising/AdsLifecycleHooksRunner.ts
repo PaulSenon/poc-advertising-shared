@@ -1,5 +1,7 @@
 import { buildStatsAndToWrapper } from "../../utils/SafePromiseWrapper";
 import StatsCollector from "../../utils/StatsCollector";
+import FakeGrapeshot from "./Hooks/FakeGrapeshot";
+import Prebid from "./Hooks/Prebid";
 import IAdvertisingLifecycleHook, { AdSlotData, filterHooks } from "./IAdvertisingLifecycleHook";
 
 /**
@@ -9,18 +11,23 @@ import IAdvertisingLifecycleHook, { AdSlotData, filterHooks } from "./IAdvertisi
  */
 export class AdsLifecycleHooksRunner {
     private wrapPromise;
+    private unsafeHooks: IAdvertisingLifecycleHook[];
     // TODO
     // PromiseWrapperBuilder
     //         .withTimeout()
     //         .withStatsCollector()
     //         .build()
-
     constructor(
-        private unsafeHooks: IAdvertisingLifecycleHook[], 
         private statsCollector: StatsCollector,
     ) {
         // TODO not like this
         this.wrapPromise = buildStatsAndToWrapper(this.statsCollector, 200);
+
+        // TODO passer dans l'init (ou i resolve dependencies si c'est des services)
+        this.unsafeHooks = [ // just throw all thirdparties here! too easy !
+            new Prebid(false), // true is for prebid debug mode. Turn it off to not spam the output logs
+            new FakeGrapeshot(),
+        ]
     }
 
     addHook(unsafeHook: IAdvertisingLifecycleHook): void {

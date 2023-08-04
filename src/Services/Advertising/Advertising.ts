@@ -2,9 +2,9 @@ import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "../../con
 import BreakPointDetector from "../../utils/BreakPointDetector";
 import InView from "../../utils/InView";
 import StatsCollector from "../../utils/StatsCollector";
+import ServerDataProvider from "../ServerDataProvider";
 import SwiperController from "../Swiper";
 import { AdsLifecycleHooksRunner } from "./AdsLifecycleHooksRunner";
-import IAdvertisingLifecycleHook from "./IAdvertisingLifecycleHook";
 import LegacyWallpaper from "./LegacyWallpaper";
 
 
@@ -39,7 +39,7 @@ declare global {
     }
 }
 
-type AdvertisingConfig = {
+export type AdvertisingConfig = {
     fullAdUnit: string; // TODO must be build php side (does not exists yet)
     keyValues?: Record<string, string>;
     lazyLoadOffsetPx?: number;
@@ -56,15 +56,11 @@ export type AdSlotConfig = {
 export default class Advertising {
     private readonly statsCollector = new StatsCollector();
     private safeHooksManager: AdsLifecycleHooksRunner;
+    private config!: AdvertisingConfig;
 
-    constructor(
-        private _config: AdvertisingConfig,
-        hooks: IAdvertisingLifecycleHook[] = [],
-    ) {
-        this.safeHooksManager = new AdsLifecycleHooksRunner(hooks, this.statsCollector);
+    constructor() {
+        this.safeHooksManager = new AdsLifecycleHooksRunner(this.statsCollector);
     }
-
-    public get config() { return this._config}
 
     public async init(): Promise<void> {
         // no ads for bots
@@ -72,6 +68,12 @@ export default class Advertising {
 
         // stats setup
         const startTimeMs = Date.now();
+
+        const advertisingData = ServerDataProvider.getInstance().getAdvertisingData();
+        if(!advertisingData) {
+            throw new Error(`advertising data not found`);
+        }
+        this.config = advertisingData;
 
         // setup wallpaper legacy stuff
         LegacyWallpaper.init(); // TODO refactor this shit
@@ -116,7 +118,11 @@ export default class Advertising {
         this.destroyAllAdSlots();
 
         // rewrite global ad config
-        // TODO how ??
+        const advertisingData = ServerDataProvider.getInstance().getAdvertisingData();
+        if(!advertisingData) {
+            throw new Error(`advertising data not found`);
+        }
+        this.config = advertisingData;
 
         // set keyvalues
         await this.setGlobalKeyvalues();
@@ -243,15 +249,6 @@ export default class Advertising {
     private handleImpressionViewable(event: googletag.events.ImpressionViewableEvent): void {
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--viewed');
-    }
-
-    /**
-     * Use this so rewrite config keyvalues (e.g. between swipe)
-     * /!\ After this, you have to load it. 
-     *     Just seting it has no effect if you don't use it afterward /!\
-     */
-    public setKeyvalues(keyvalues: Record<string, string>): void {
-        this._config.keyValues = keyvalues;
     }
 
     /**
