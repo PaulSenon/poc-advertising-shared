@@ -439,6 +439,7 @@ export default class Advertising {
         adElement.classList.remove('advertising--rendered');
         adElement.classList.remove('advertising--empty-slot');
         adElement.classList.remove('advertising--called');
+        adElement.classList.remove('advertising--viewed');
     }
 
     /**
