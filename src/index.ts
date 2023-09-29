@@ -36,10 +36,7 @@ window.advertising = advertising; // global ref just for POC, so Swiper can call
 
 // inits
 swiper.init();
-advertising.init().then(() => {
-    console.debug('init finished');
-    console.debug(advertising.getStatsCollector().toString()); // this is just for demo purpose
-});
+advertising.init();
 
 
 

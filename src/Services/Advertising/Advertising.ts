@@ -102,6 +102,7 @@ export default class Advertising implements IService {
         // log perfs
         const deltaTime = Date.now() - startTimeMs;
         console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
+        console.debug(this.getStatsCollector().toString());
     }
     
     public async reset(): Promise<void> {
@@ -140,6 +141,7 @@ export default class Advertising implements IService {
         // log perfs
         const deltaTime = Date.now() - startTimeMs;
         console.debug(`Total blocking time before calling ads: ${deltaTime}ms.`);
+        console.debug(this.getStatsCollector().toString());
     }
 
     private static getAdSlotConfig(adElement: HTMLElement): AdSlotConfig | undefined {
