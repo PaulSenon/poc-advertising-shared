@@ -1,7 +1,7 @@
 import { buildStatsAndToWrapper } from "../../utils/SafePromiseWrapper";
 import StatsCollector from "../../utils/StatsCollector";
-import FakeGrapeshot from "./Hooks/FakeGrapeshot";
-import Prebid from "./Hooks/Prebid";
+import IService from "../IService";
+import YieldbirdService from "./Hooks/YieldbirdService";
 import IAdvertisingLifecycleHook, { AdSlotData, filterHooks } from "./IAdvertisingLifecycleHook";
 
 /**
@@ -9,9 +9,9 @@ import IAdvertisingLifecycleHook, { AdSlotData, filterHooks } from "./IAdvertisi
  * And add parallelization/timeout/stats to them.
  * This is the layer to use from Advertising.ts to run any hook.
  */
-export class AdsLifecycleHooksRunner {
+export class AdsLifecycleHooksRunner implements IService {
     private wrapPromise;
-    private unsafeHooks: IAdvertisingLifecycleHook[];
+    private unsafeHooks: (IService & IAdvertisingLifecycleHook)[];
     // TODO
     // PromiseWrapperBuilder
     //         .withTimeout()
@@ -25,12 +25,27 @@ export class AdsLifecycleHooksRunner {
 
         // TODO passer dans l'init (ou i resolve dependencies si c'est des services)
         this.unsafeHooks = [ // just throw all thirdparties here! too easy !
-            new Prebid(false), // true is for prebid debug mode. Turn it off to not spam the output logs
-            new FakeGrapeshot(),
+            new YieldbirdService(),
         ]
     }
 
-    addHook(unsafeHook: IAdvertisingLifecycleHook): void {
+    // hack to propagate init, it is managed automatically by our app core on the real website
+    async init(): Promise<void> {
+        for (const hook of this.unsafeHooks) {
+            await hook.init();
+        }
+        return Promise.resolve();
+    }
+
+    // hack to propagate reset, it is managed automatically by our app core on the real website
+    async reset(): Promise<void> {
+        for (const hook of this.unsafeHooks) {
+            await hook.reset();
+        }
+        return Promise.resolve();
+    }
+
+    addHook(unsafeHook: IService & IAdvertisingLifecycleHook): void {
         this.unsafeHooks.push(unsafeHook);
     }
 

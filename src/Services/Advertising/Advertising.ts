@@ -2,6 +2,7 @@ import { AdSlotKind, adSlotsTargetingConfig, isValidAdSlotKind } from "../../con
 import BreakPointDetector from "../../utils/BreakPointDetector";
 import InView from "../../utils/InView";
 import StatsCollector from "../../utils/StatsCollector";
+import IService from "../IService";
 import ServerDataProvider from "../ServerDataProvider";
 import SwiperController from "../Swiper";
 import { AdsLifecycleHooksRunner } from "./AdsLifecycleHooksRunner";
@@ -53,7 +54,7 @@ export type AdSlotConfig = {
     keyvalues: Map<string, string>,
 }
 
-export default class Advertising {
+export default class Advertising implements IService {
     private readonly statsCollector = new StatsCollector();
     private safeHooksManager: AdsLifecycleHooksRunner;
     private config!: AdvertisingConfig;
@@ -65,6 +66,8 @@ export default class Advertising {
     public async init(): Promise<void> {
         // no ads for bots
         if (Advertising.isBot()) return;
+        console.debug(`Starging advertising init()`);
+        await this.safeHooksManager.init();
 
         // stats setup
         const startTimeMs = Date.now();
@@ -104,6 +107,8 @@ export default class Advertising {
     public async reset(): Promise<void> {
         // no ads for bots
         if (Advertising.isBot()) return;
+        console.debug(`Starging advertising reset()`);
+        await this.safeHooksManager.reset();
 
         // stats setup
         const startTimeMs = Date.now();
@@ -225,14 +230,14 @@ export default class Advertising {
 
     /** (i) when an ad is requested, it does NOT impact viewability */
     private handleSlotRequested(event: googletag.events.SlotRequestedEvent): void {
-        console.debug('slot requested', document.getElementById(event.slot.getSlotElementId()))
+        // console.debug('slot requested', document.getElementById(event.slot.getSlotElementId()))
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--requested');
     }
     
     /** (i) when an ad is loaded, it impact viewability */
     private handleSlotOnLoad(event: googletag.events.SlotOnloadEvent): void {
-        console.debug('slot loaded', document.getElementById(event.slot.getSlotElementId()))
+        // console.debug('slot loaded', document.getElementById(event.slot.getSlotElementId()))
         const adElement = document.getElementById(event.slot.getSlotElementId());
         adElement?.classList.add('advertising--loaded');
     
@@ -274,6 +279,8 @@ export default class Advertising {
             googletag.destroySlots();
             googletag.pubads().clearTargeting();
 
+            console.debug(`googletag: all slots have been destoyed`);
+
             // At this point the page is reset, to display new ad you have to:
             //  1 - restore desired adSlot Ids (from data-ad-id)
             //  2 - redefine adSlots with googletag
@@ -297,7 +304,6 @@ export default class Advertising {
                 ...document.querySelectorAll(querySelectorOutsideSwiper),
                 ...document.querySelectorAll(querySelectorInsideActiveSlide)
             ] as HTMLElement[];
-            console.dir(adElementsToEnable); // TODO: remove
     
             // do googletag stuff
             googletag.cmd.push(async () => {
@@ -316,6 +322,8 @@ export default class Advertising {
                     config: i.config,
                 })));
 
+                console.debug(`googletag: adslots created:`, adSlotsInfos);
+
                 return resolve();
             });
         });
@@ -332,6 +340,8 @@ export default class Advertising {
         
                 // 3) trigger ad calls
                 googletag.pubads().refresh(); // necessarry because "disableInitialLoad()""
+
+                console.debug(`googletag: ads refreshed !`);
 
                 return resolve();
             })
@@ -370,6 +380,8 @@ export default class Advertising {
                     }
                 });
 
+                console.debug(`googletag: seting global targeting:`, globalKeyvalues);
+
                 return resolve();
             })
         });
@@ -390,7 +402,10 @@ export default class Advertising {
         if (!Advertising.isOffscreenAd(adElement) && 
             !Advertising.isVisible(adElement)
         ) {
-            console.debug('skipped ad because hidden', adElement)
+            console.debug('googletag: slot creation skiped because hidden:', {
+                element: adElement,
+                config: slotConfig
+            })
             return;
         }
 
@@ -412,6 +427,12 @@ export default class Advertising {
             element: adElement,
             slot: adSlot,
             config: slotConfig
+        });
+
+        console.debug(`googletag: slot created:`, {
+            slot: adSlot,
+            element: adElement,
+            config: slotConfig,
         });
 
         return {
