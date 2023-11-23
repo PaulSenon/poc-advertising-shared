@@ -1,5 +1,5 @@
-import IService from "../../IService";
 import IAdvertisingLifecycleHook, { AdSlotData } from "../IAdvertisingLifecycleHook";
+import IService from "../../IService";
 
 //////////////////////////////////
 // Mocking Quickwrap
@@ -10,22 +10,23 @@ interface QW {
     fetchAdUnits?(): Promise<void>;
 }
 
+interface YbConfiguration {
+   integrationMethod: string;
+   smartRefreshDisabled: boolean; 
+}
+
+interface Yieldbird {
+    cmd: (() => void)[],
+}
+
 declare global {
     interface Window {
-        Quickwrap: QW
+        Quickwrap: QW,
+        ybConfiguration: YbConfiguration,
+        Yieldbird: Yieldbird,
     }
 }
 
-window.Quickwrap = {
-    cmd: [],
-    adUnitMapper(slots: googletag.Slot[]): void {
-        console.debug('QW: Adding slots:', slots);
-    },
-    fetchAdUnits(): Promise<void> {
-        console.debug('QW: fetching data');
-        return new Promise(resolve => setTimeout(resolve, 100));
-    }
-}
 //////////////////////////////////
 
 export default class YieldbirdService implements IService, IAdvertisingLifecycleHook {
@@ -38,7 +39,7 @@ export default class YieldbirdService implements IService, IAdvertisingLifecycle
         console.debug('Yieldbird: init()');
 
         // make sure window.Quickwrap.cmd queue is defined
-        this.setWindowApiObject();
+        this.setWindowApiObjects();
         
         // load quickwrap (resolves with a ready qw instance)
         this.qw = await this.loadQw();
@@ -53,42 +54,54 @@ export default class YieldbirdService implements IService, IAdvertisingLifecycle
 
     // hook when all slots are created for googletag
     public async handleAllSlotsCreated(adSlotsData: AdSlotData[]): Promise<void> {
+        console.debug('Sending all slots to Quickwrap:', adSlotsData);
         const slots = adSlotsData.map(data => data.slot);
         this.qw?.adUnitMapper?.(slots);
     }
 
     // hook right before calling ads (pubads.refesh())
     public async handleBeforeCallingAds(): Promise<void> {
+        console.debug('Do bidding...');
         await this.qw?.fetchAdUnits?.();
+        console.debug('Bidding done !');
     }
 
     /**
      * Defined window.Quickwrap cmd queue if not defined;
      */
-    private setWindowApiObject(): void {
+    private setWindowApiObjects(): void {
         window.Quickwrap = window.Quickwrap || {};
         window.Quickwrap.cmd = window.Quickwrap.cmd || [];
+        window.ybConfiguration = window.ybConfiguration || {};
+        window.ybConfiguration = { 
+            integrationMethod: 'open_tag', 
+            smartRefreshDisabled: true 
+        };
+        window.Yieldbird = window.Yieldbird || {};
+        window.Yieldbird.cmd = window.Yieldbird.cmd || [];
     }
 
     /**
      * Loads qw.js and resolve window.Quickwrap when it's fully ready
      */
     private async loadQw(): Promise<QW> {
-        return new Promise((resolve) => {
-            // TODO: find a way to detect when window.Quickwrap is ready (sub to global event or define global method or something)
-            // As a suggestion I guess we can just queue up a callback for Quickwrap to call and if will be called when everything is ready ?
-            // => window.Quickwrap.cmd.push(() => resolve(window.Quickwrap));
-            // but as we have no read qw in this poc, I will just resolve my mock to provide don't stay in pending state for our tests:
-            return resolve(window.Quickwrap);
+        return new Promise((resolve, reject) => {
+            window.Quickwrap.cmd.push(() => {
+                console.debug('Quickwrap loaded');
+                return resolve(window.Quickwrap);
+            })
+            
+            if(document.getElementById('yieldbirdQuickwrapTag')) {
+                console.warn('Quickwrap script already loaded');
+                return; // will eventually resolve because of pushed resolve above
+            }
 
-            // example of how we could load the tag if qw is no longer a mock:
-            // const scriptTag = document.createElement('script');
-            // scriptTag.defer = true;
-            // scriptTag.id = 'yieldbirdQuickwrapTag'
-            // scriptTag.src = '[...]/qw.js'
-            // scriptTag.onerror = reject;
-
-            // document.head.appendChild(scriptTag);
+            const scriptTag = document.createElement('script');
+            scriptTag.id = 'yieldbirdQuickwrapTag'
+            scriptTag.defer = true;
+            scriptTag.src = '//cdn.qwtag.com/6cf02e9d-7075-4c1d-bed3-449eaa57128d/qw.js';
+            scriptTag.onerror = e => reject({message: 'failed to load qw.js', error: e});
+            document.head.appendChild(scriptTag);
         })
     }
 }
